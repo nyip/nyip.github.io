@@ -1,0 +1,278 @@
+---
+title: "Correlations between COVID19 Death Rates and Other Factors"
+author: "Ngou Yin Yip, Christina Zhang, Shivanee Arun"
+date: "5/17/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction: 
+The ongoing pandemic has been an unprecedented disruption to the world, with many countries experiencing high fatality rates, implementing lockdowns and overwhelming hospitals. Currently, there have been 4,841,065 tested cases worldwide. However, there seems to be some countries that have not been impacted as severely as others. Our team thought it would be interesting to explore the factors that might contribute to how hard a country is hit by covid-19, and see if we can create a predictive model for these factors.
+This tutorial highlights and offers comparisons between the coronavirus’s death toll for each country and external factors such as life expectancy, freedom, corruption, and GDP.  
+
+# Project Motivation: 
+In our analysis, we picked four attributes of each country; GDP per capita, perception of corruption, life expectancy, and freedom, to try and find any correlations in virus death rates and the selected attributes. Therefore, in future pandemic events, we may be able to predict which countries will be more heavily impacted and determine the reasons in order to best protect each country’s citizens. Are people surviving because their countries are freer, healthier, less corrupt or because they are richer? From these predictions, governments could improve several of these factors in order to better control future outbreaks. 
+
+```{r libraries, include=TRUE, warning = FALSE, error = FALSE, message = FALSE}
+library(tidyverse) 
+library(ggplot2)
+library(gapminder)
+library(dplyr)
+library(readxl)
+library(broom)
+```
+
+First, we downloaded several datasets to use in our analysis. “hap_db” has information on the country's freedom and corruption. “Covid_deaths” has information on the total amount of deaths related to covid-19 for each country. “Populations” has information about the total population size for each country. “Lifeexp” has information about the life expectancy for each country. 
+
+For more information on the happiness index, look here: https://worldhappiness.report/
+For more information on worldwide covid-19 deaths, look here: https://www.worldometers.info/coronavirus/?utm_campaign=homeAdvegas1?%22 
+
+```{r dataread, include = TRUE, warning = FALSE, error = FALSE, message = FALSE}
+hap_db <- read_csv("2019.csv")
+
+covid_deaths <- read_csv("total_deaths_covid_19.csv")
+
+populations <- read_csv("covid19countryinfo.csv")
+
+gdp_data <- read_csv("gdp.csv")
+
+lifeexp <- read_excel("life_expectancy.xls")
+```
+
+# Data tidying
+
+First, select columns that we’ll be using to draw comparisons/analysis.
+We currently need to extract key indicators within the happiness index to compare to death rates in order to evaluate whether there is a correlation between overall standard of living of a country to the number of deaths experienced due to COVID-19. We combined data via country, and added the necessary attributes from the other datasets such as GDP, Life Expectancy for given countries and so forth. 
+
+```{r selectcol, include = TRUE, warning = FALSE, error = FALSE, message = FALSE}
+happ_db <- hap_db %>%
+	select('Country or region', 'Freedom to make life choices','Perceptions of corruption')
+
+dead_db <- covid_deaths %>% 
+	select('Entity', 'Date', 'Total confirmed deaths due to COVID-19 (deaths)')
+dead_db1 <- filter (dead_db, Date == "May 8, 2020")
+
+Dead_db2 <- rename(dead_db1, 'Country or region' = 'Entity')
+
+population_db <- populations %>% 
+  select('region','country', 'pop')
+
+gdp_data1 <- gdp_data %>% 
+  rename(
+    GDP = X5,
+    country = X4
+    ) %>%
+    select('country', 'GDP')
+gdp_data2 <- slice(gdp_data1, 5:328)
+
+life_exp <- lifeexp %>% 
+  rename(
+    'life expectancy' = '...63',
+    'country' = 'Data Source'
+    ) %>%
+    select('country', 'life expectancy')
+life_exp2 <- slice(life_exp, 4:267)
+
+all_db <- happ_db %>% inner_join(Dead_db2, by=c('Country or region')) 
+all_db <- rename(all_db, 'country' = 'Country or region')
+all_db2 <- all_db %>% inner_join(population_db, by =c ('country')) %>% inner_join(gdp_data2, by =c ('country')) %>% inner_join(life_exp2, by =c ('country'))
+
+all_db2 <- all_db2 %>%
+  select(region, everything())
+head(all_db2)
+```
+
+We also need to standardize some of the data. First, we added a new column to standardize the covid19 deaths by dividing it by the country's population, and removed the rows belonging to subregions of a country since much of the data is duplicated for subregions. The data for “perception of corruption” was renamed “trust in government” to make it clearer what it represents. Since the highest value for that factor is 0.45, we also divided each by 0.45 to standardize the data range from 0 to 1. We did the same for “freedom to make life choices”. Then, we converted the data column types to numeric so we can use it for analysis later. 
+
+```{r standardizing}
+all_db3 <- mutate(all_db2, death_rate= all_db2$'Total confirmed deaths due to COVID-19 (deaths)' /pop)
+all_db3 <- all_db3[(is.na(all_db3$region)) > 0,] 
+all_db3$region <- NULL
+all_db3 <- mutate(all_db3, num_GDP= str_replace_all(GDP, ",", ""))
+all_db3$GDP <- as.double(all_db3$num_GDP)
+all_db3$`life expectancy` <- as.double(all_db3$`life expectancy`)
+all_db3$'Freedom to make life choices' <- as.numeric(as.character(all_db3$'Freedom to make life choices')) / .631
+all_db3$'Perceptions of corruption' <- as.numeric(as.character(all_db3$'Perceptions of corruption')) / .453
+all_db3 <- rename(all_db3, 'trust in government' = 'Perceptions of corruption')
+
+head(all_db3)
+```
+
+# Scatterplots
+
+This scatterplot shows the relationship of death rate in a country and the country’s perception of corruption (trust in government) in the government
+```{r scatterplots}
+all_db3%>%
+  ggplot(aes(y =`death_rate`, x = `trust in government`)) +
+  geom_point() +
+  geom_smooth(method = 'lm') + 
+  ggtitle("perception of corruption vs deaths")
+```
+
+
+For trust in government, We can see that most of the plot points are clustered around the lower left corner near 0. 
+The regression line is linear and upward pointing, but it is hard to tell whether the relationship is actually linear or not, and whether performing a linear regression to predict the death rate will be accurate.
+
+
+This scatterplot shows the relationship of death rate in a country and the degree of the country’s freedom. 
+```{r freedom}
+#scatter plot showing freedom vs deaths
+all_db3%>%
+  ggplot(aes(y =`death_rate`, x = `Freedom to make life choices`)) +
+  geom_point() +
+  geom_smooth(method = 'lm') + 
+  ggtitle("freedom vs deaths")
+```
+
+For freedom, we can see that the scatterplot also is slightly upward pointing for this graph as well. 
+However, most of the points are near 0, but not necessarily clustered around the lower left side. 
+We also are not sure if this data is fit for a linear regression.
+
+This scatterplot shows the relationship of death rate in a country and the country’s GDP. (all in USD)  
+```{r gdp}
+#scatter plot showing gdp vs deaths
+all_db3%>%
+  ggplot(aes(y =`death_rate`, x = `GDP`)) +
+  geom_point() +
+  geom_smooth(method = 'lm') + 
+  ggtitle("gdp vs deaths")
+```
+
+
+
+For GDP, we can see that most of the plot points are clustered around the lower left corner near 0. The regression line is linear and upward pointing, but it is hard to tell whether the relationship is actually linear or not. 
+
+
+This scatterplot shows the relationship of death rate in a country and the country’s life expectancy. 
+```{r life expectancy}
+all_db3%>%
+  ggplot(aes(y =`death_rate`, x = `life expectancy`)) +
+  geom_point() +
+  geom_smooth(method = 'lm') + 
+  ggtitle("")
+```
+
+
+For life expectancy, we can see that the death rate seems to increase logistically as the life expectancy increases.
+
+
+# Hypothesis Testing 
+Based on the linear plots above, it is hard to determine concrete correlations between the selected attributes and the number of COVID-19 deaths. To further analyze the relationship to determine whether a correlation exists would be to reject the Null Hypothesis via Hypothesis Testing. 
+
+The null hypothesis is that there is a linear correlation between each of these selected attributes and COVID-19 deaths. To test our hypothesis, we used a tidy function to construct a confidence interval to showcase estimates for standard errors. We will be using a 95% confidence interval to evaluate the attributes. 
+
+# Life expectancy
+```{r lifexp tidy}
+tidydb <- lm(death_rate~`life expectancy`, data=all_db3)
+tidydb <- broom::tidy(tidydb)
+tidydb
+```
+We are not rejecting the hypothesis because the p value is 0.000016, less than the alpha of 0.05. 
+For every extra year of life expectancy, the death rate seems to increase by 6.5e-06.
+
+ 
+# Freedom
+```{r freedom tidy}
+free_tidydb <- lm(death_rate~`Freedom to make life choices`, data=all_db3)
+free_tidydb <- broom::tidy(free_tidydb)
+free_tidydb
+```
+We are rejecting the hypothesis because the p value is 0.25, more than the alpha of 0.05. 
+
+
+# Trust in government
+```{r corrupt tidy}
+corrupt_tidydb <- lm(death_rate~`trust in government`, data=all_db3)
+corrupt_tidydb <- broom::tidy(corrupt_tidydb)
+corrupt_tidydb
+```
+We are not rejecting the hypothesis because the p value is 0.0015, less than the alpha of 0.05. It seems that as trust in government increases, so does the death rate. However, this could be due to the fact that untrustworthy and corrupt governments will not accurately report information, so it seems like trustworthy governments have higher death rates. 
+
+# GDP
+```{r gdp tidy}
+gdp_tidydb <- lm(death_rate~`GDP`, data=all_db3)
+gdp_tidydb <- broom::tidy(gdp_tidydb)
+gdp_tidydb
+```
+We would reject the null hypothesis for GDP as the p value is 0.06, greater than 0.05. Thus, it can be determined that we cannot perform a regression-based analysis as there is little to no correlation between the number of deaths due to COVID in a country and GDP of a country. 
+
+# Linear Regression
+
+We wanted to see if we could perform a linear regression on the relationship between the attributes and death rate. 
+
+
+We first augmented the tidied data for life expectancy in order to see the residuals of the relationship in a violin graph.
+```{r lin reg}
+augmented_tidy <- lm(death_rate~all_db3$`life expectancy`, data=all_db3) %>%
+  broom::augment()
+head(augmented_tidy)
+
+augmented_tidy %>%
+  ggplot(aes(x=factor(death_rate), y=.resid)) +
+    geom_violin() +
+    labs(title="Residuals Over Death Rate: Lifespan",
+         x = "death_rate",
+         y = "residual")
+
+```
+
+
+We see that the residuals do not center around 0, so this relationship is not linear, and linear regression will not give us an accurate prediction model. 
+
+We also tried it on trust in government.
+```{r tidycorrupt}
+
+augmented_tidy_corrupt <- lm(death_rate ~all_db3$`trust in government`, data=all_db3) %>%
+  broom::augment()
+head(augmented_tidy)
+
+augmented_tidy_corrupt %>%
+  ggplot(aes(x=factor(all_db3$'trust in government'), y=.resid)) +
+    geom_violin() +
+    labs(title="Residuals Over Death Rate: Trust",
+         x = "death_rate",
+         y = "residual")
+```
+
+We cannot use linear regression. The residuals are not centered around 0, which indicates that there could be a dependency between the variables. 
+
+
+# Logistic Regression 
+We performed another form of data analysis - specifically logistic regression to take into account for variable interdependencies. In this case, we’re checking for correlation between death rate for COVID-19 and freedoms(freedom factor) provided by each country. 
+
+```{r tidyfreedom}
+
+augmented_tidy_freedom <- lm(death_rate ~all_db3$`Freedom to make life choices`, data=all_db3) %>%
+  broom::augment()
+head(augmented_tidy)
+
+augmented_tidy_freedom %>%
+  ggplot(aes(x=factor(all_db3$'Freedom to make life choices'), y=.resid)) +
+    geom_violin() +
+    labs(title="Residuals Over Death Rate: Freedom",
+         x = "Freedom",
+         y = "residual")
+
+logistic_model = glm(formula = death_rate ~ country+all_db3$`Freedom to make life choices`, data = all_db3, family="binomial")
+summary(logistic_model)
+
+```
+
+Since we saw earlier from the violin graphs that there is some dependency between death rate and freedom, we performed an interaction model to better see the relationship.
+
+```{r intlogmodel}
+interaction_logistic_model = glm(formula = death_rate ~ all_db3$`Freedom to make life choices`*country, data = all_db3, family="quasibinomial")
+summary(interaction_logistic_model)
+```
+
+
+# CONCLUSION
+
+In conclusion, we were able to see some correlation between death and life expectancy, trust in government, and freedom. GDP did not end up being a factor that was related to death rate. In all the attributes -  trust, life expectancy, and freedom, in countries with lower levels of the attribute, there was actually a lower death rate. This might be due to other external factors. For example, the population density of these countries are more spaced out, or there are fewer foreign visitors, so there is a lower risk for a contagion. Corrupt governments could simply cover up the situation, creating a false relationship that more trustworthy governments experience higher death rates. In addition, the culture of the countries with higher levels of each of the attributes may encourage crowded areas or close contact, so the risk of covid-19 spreading is higher.
+
+Next Steps: 
+Other areas that we could continue to explore would be literacy rate, social support, smoking rates, tourism and unemployment rates. These indicators affect public perception of the pandemic and have a significant impact on the resulting solutions the government takes for curbing death rates. 
+
